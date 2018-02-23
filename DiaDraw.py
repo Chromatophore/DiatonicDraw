@@ -4,8 +4,16 @@ import itertools
 #print "Number of arguments: ", len(sys.argv)
 #print "The arguments are: " , str(sys.argv)
 
-
 use_circle_of_fifths = True
+includeArpeggios = True
+
+colours = ("-fill \"rgb(255,155,200)\"",
+		   "-fill \"rgb(255,200,155)\"",
+		   "-fill \"rgb(200,255,200)\"",
+		   "-fill \"rgb(200,200,255)\"",
+		   "-fill \"rgb(155,200,255)\"",
+		   "-fill \"rgb(200,155,255)\"",
+		   "-fill \"rgb(155,255,200)\"")
 
 ##### Semitone Math:
 semitones = [
@@ -233,40 +241,28 @@ class Layout:
 		maxlen = 0
 		for row in self.raw_rows:
 			maxlen = max(maxlen, len(row) / 2)
-		width = maxlen * (distance_x) + 2 * x_border
+		self.width = maxlen * (distance_x) + 2 * x_border
 
 		# Height should be, the borders on top, the total distance betwen the top of the top row and the top of the bottom row, and then
 		# a single width of a circle
-		height = y_border * 2 + (self.row_count - 1) * distance_y + circle_size
+		self.height = y_border * 2 + (self.row_count - 1) * distance_y + circle_size
 
 		half_circle = circle_size * 0.5
 		# The starting height will be the border plus half of a circle
 		row_base_height = y_border + half_circle
 
 		# Calculate center position for text:
-		center_x = width / 2
-		center_y = height / 2
+		center_x = self.width / 2
+		center_y = self.height / 2
 
 		# Set up the layout drawing:
-		layout_output = "convert -size %sx%s xc:transparent -fill transparent -strokewidth 2  -stroke black" % (width, height)
+		layout_output = "convert -size %sx%s xc:transparent -fill transparent -strokewidth 2  -stroke black" % (self.width, self.height)
 		text_extra = " -fill black -font Arial -stroke transparent -pointsize 36 -gravity center"
 		text_small = " -pointsize 24"
 
-		# Dicts to store coords for later use:
-		button_coords = {}
-		push_arc_lookup = {}
-		pull_arc_lookup = {}
-
-		def push_to_arclookup(note, lookup_dict, locationdata):
-			h = []
-			try:
-				h = lookup_dict[note]
-			except KeyError:
-				lookup_dict[note] = h
-			h.append(locationdata)
+		self.arc_lookup = {}
 
 		# for each row, we will draw all the buttons and lines:
-
 		buttons_in_row = {}
 
 		for r in range(len(self.raw_rows)):
@@ -282,24 +278,13 @@ class Layout:
 				line_low = row_height + half_circle
 
 				q = float(j) - float( buttons - 1) / 2
-				x = width/2 + q * distance_x
+				x = self.width/2 + q * distance_x
 
 				layout_output += " -draw \"circle %d,%d %d,%d\"" % (x ,row_height, x,circle_other)
 				layout_output += " -draw \"line %d,%d %d,%d\"" % (x, circle_other, x, line_low)
 
-				tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 90, 270)
-
-				push_to_arclookup(row[j*2],button_coords,tup)
-				push_to_arclookup(row[j*2],push_arc_lookup,tup)
-
-				tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 270, 90)
-
-				push_to_arclookup(row[j*2],button_coords,tup)
-				push_to_arclookup(row[j*2 + 1],pull_arc_lookup,tup)
-
+		# Then draw the notes afterwards:
 		for note in self.notes:
-			#push = NoteSplit(row[j*2])
-			#pull = NoteSplit(row[j*2 + 1])
 			basic = note[1]
 			octave = note[2]
 			push = note[4]
@@ -307,7 +292,7 @@ class Layout:
 
 			row_height = location[0] * distance_y + row_base_height			
 			q = float(location[1] / 2) - float( buttons_in_row[location[0]] - 1) / 2
-			x = width/2 + q * distance_x
+			x = self.width/2 + q * distance_x
 
 			text_x = x - center_x
 
@@ -321,12 +306,73 @@ class Layout:
 			text_extra += " -draw \"text %d,%d '%s'\"" % (basic_text_x,row_height - center_y, basic)
 			text_small += " -draw \"text %d,%d '%s'\"" % (octave_text_x,row_height - center_y+octave_shift,octave)
 
+			tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 90, 270)
+
+			self.arc_lookup[note] = tup
+
 		layout_output += text_extra
 		layout_output += text_small
 
 		layout_output += " layout.png"
 
-		return layout_output
+		return [self.width, self.height, layout_output]
+
+	def DrawChords(self):
+
+		if not self.chords:
+			return
+
+		output_base = "convert -size %dx%d xc:transparent " % (self.width + font_label_width,self.height)
+		output_base += " -stroke black -strokewidth 3 -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\"" % ( font_label_width, 0, font_label_width, height, 0, height, font_label_width + width, height, 0, 0, font_label_width + width, 0)
+
+		chord_draw = []
+
+		for chord in self.chords:
+			name = chord[0]
+
+			# We may need to create up to 3 files depending on how we want this information to be displayed
+			# We have Push, Pull and Arpeggio
+			drawings = ["", "", ""]
+			colour_indexes = [0,0,0]
+
+			solutions = chord[1]
+			for solution in solutions:
+				if solution[0] > -1000 or includeArpeggios:
+					if solution[0] <= -1000:
+						use_index = 2
+					elif push:
+						use_index = 0
+					else:
+						use_index = 1
+
+					c_index = colour_indexes[use_index]
+					snew = " %s" % colours[c_index]
+					colour_indexes[use_index] = colour_indexes[use_index] + 1
+					push = False
+					for note in solution[1]:
+						arc = self.arc_lookup[note]
+						push = note[4]
+						snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
+
+					drawings[use_index] += snew
+
+			name_modify = [" PUSH", " PULL", " ARP"]
+
+			for drawing in range(len(drawings)):
+				if drawings[drawing]:
+					chord_output = output_base
+					# Write down what chord this is
+					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\"" % ( - self.width / 2, 0, name + name_modify[drawing])
+					chord_output += " -gravity NorthWest"
+					chord_output += drawings[drawing]
+					chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, name + name_modify[drawing])
+
+					drawings[drawing] = (chord_output)
+
+			for file in drawings:
+				print file
+			exit()
+
 
 
 
@@ -418,20 +464,15 @@ font_label_width = 500
 
 chords_per_page = 9
 
-layout_output = lay.DrawLayout()
+layout_result = lay.DrawLayout()
 
+width = layout_result[0]
+height = layout_result[1]
+layout_output = layout_result[2]
 
-print layout_output
+lay.DrawChords()
 
 exit()
-
-colours = ("-fill \"rgb(255,155,200)\"",
-		   "-fill \"rgb(255,200,155)\"",
-		   "-fill \"rgb(200,255,200)\"",
-		   "-fill \"rgb(200,200,255)\"",
-		   "-fill \"rgb(155,200,255)\"",
-		   "-fill \"rgb(200,155,255)\"",
-		   "-fill \"rgb(155,255,200)\"")
 
 partial_high = 1
 chord_files = []
