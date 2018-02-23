@@ -235,9 +235,19 @@ class Layout:
 			maxlen = max(maxlen, len(row) / 2)
 		width = maxlen * (distance_x) + 2 * x_border
 
-		height = y_border * 2 + self.row_count * distance_y
+		# Height should be, the borders on top, the total distance betwen the top of the top row and the top of the bottom row, and then
+		# a single width of a circle
+		height = y_border * 2 + (self.row_count - 1) * distance_y + circle_size
 
-			# Set up the layout drawing:
+		half_circle = circle_size * 0.5
+		# The starting height will be the border plus half of a circle
+		row_base_height = y_border + half_circle
+
+		# Calculate center position for text:
+		center_x = width / 2
+		center_y = height / 2
+
+		# Set up the layout drawing:
 		layout_output = "convert -size %sx%s xc:transparent -fill transparent -strokewidth 2  -stroke black" % (width, height)
 		text_extra = " -fill black -font Arial -stroke transparent -pointsize 36 -gravity center"
 		text_small = " -pointsize 24"
@@ -249,23 +259,27 @@ class Layout:
 
 		def push_to_arclookup(note, lookup_dict, locationdata):
 			h = []
-
 			try:
 				h = lookup_dict[note]
 			except KeyError:
 				lookup_dict[note] = h
 			h.append(locationdata)
 
-		row_height
-		for row in raw_rows:
-			global layout_output
-			global text_extra
-			global text_small
-			global button_coords
+		# for each row, we will draw all the buttons and lines:
+
+		buttons_in_row = {}
+
+		for r in range(len(self.raw_rows)):
+			row = self.raw_rows[r]
 			buttons = len(row) / 2
+			buttons_in_row[r] = buttons
+
 			for j in range(buttons):
-				circle_other = row_height - circle_size/  2
-				line_low = row_height + circle_size / 2
+
+				row_height = r * distance_y + row_base_height
+
+				circle_other = row_height - half_circle
+				line_low = row_height + half_circle
 
 				q = float(j) - float( buttons - 1) / 2
 				x = width/2 + q * distance_x
@@ -273,35 +287,39 @@ class Layout:
 				layout_output += " -draw \"circle %d,%d %d,%d\"" % (x ,row_height, x,circle_other)
 				layout_output += " -draw \"line %d,%d %d,%d\"" % (x, circle_other, x, line_low)
 
-				center_x = width / 2
-				center_y = height / 2
-
-				tup = (x - circle_size / 2 + font_label_width,row_height - circle_size / 2, x + circle_size / 2 + font_label_width, row_height + circle_size / 2, 90, 270)
+				tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 90, 270)
 
 				push_to_arclookup(row[j*2],button_coords,tup)
 				push_to_arclookup(row[j*2],push_arc_lookup,tup)
 
-				tup = (x - circle_size / 2 + font_label_width,row_height - circle_size / 2, x + circle_size / 2 + font_label_width, row_height + circle_size / 2, 270, 90)
+				tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 270, 90)
 
 				push_to_arclookup(row[j*2],button_coords,tup)
 				push_to_arclookup(row[j*2 + 1],pull_arc_lookup,tup)
 
-				push = NoteSplit(row[j*2])
-				pull = NoteSplit(row[j*2 + 1])
+		for note in self.notes:
+			#push = NoteSplit(row[j*2])
+			#pull = NoteSplit(row[j*2 + 1])
+			basic = note[1]
+			octave = note[2]
+			push = note[4]
+			location = note[5]
 
-				text_x = x - center_x
+			row_height = location[0] * distance_y + row_base_height			
+			q = float(location[1] / 2) - float( buttons_in_row[location[0]] - 1) / 2
+			x = width/2 + q * distance_x
 
-				text_extra += " -draw \"text %d,%d '%s'\" -draw \"text %d,%d '%s'\"" % (text_x - circle_size/4 + font_shift,row_height - center_y,push[0],text_x + circle_size/4 + font_shift,row_height - center_y,pull[0])
-				text_small += " -draw \"text %d,%d '%s'\" -draw \"text %d,%d '%s'\"" % (text_x - octave_x + font_shift,row_height - center_y+octave_shift,push[1],text_x + octave_x + font_shift,row_height - center_y+octave_shift,pull[1])
+			text_x = x - center_x
 
-		h = height / 2
-		if validrows == 2:
-			h -= distance_y / 2
-		elif validrows == 3:
-			h -= distance_y
-		draw_row(row1,h)
-		draw_row(row2,h + distance_y)
-		draw_row(row3,h + 2 * distance_y)
+			if push:
+				basic_text_x = text_x - circle_size/4 + font_shift
+				octave_text_x = text_x + octave_x + font_shift
+			else:
+				basic_text_x = text_x + circle_size/4 + font_shift
+				octave_text_x = text_x - octave_x + font_shift
+
+			text_extra += " -draw \"text %d,%d '%s'\"" % (basic_text_x,row_height - center_y, basic)
+			text_small += " -draw \"text %d,%d '%s'\"" % (octave_text_x,row_height - center_y+octave_shift,octave)
 
 		layout_output += text_extra
 		layout_output += text_small
