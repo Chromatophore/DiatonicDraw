@@ -296,17 +296,23 @@ class Layout:
 
 			text_x = x - center_x
 
+			arc_start = 90
+			arc_end = 270
+
 			if push:
 				basic_text_x = text_x - circle_size/4 + font_shift
 				octave_text_x = text_x + octave_x + font_shift
+
 			else:
 				basic_text_x = text_x + circle_size/4 + font_shift
 				octave_text_x = text_x - octave_x + font_shift
+				arc_start = 270
+				arc_end = 90
 
 			text_extra += " -draw \"text %d,%d '%s'\"" % (basic_text_x,row_height - center_y, basic)
 			text_small += " -draw \"text %d,%d '%s'\"" % (octave_text_x,row_height - center_y+octave_shift,octave)
 
-			tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, 90, 270)
+			tup = (x - half_circle + font_label_width,row_height - half_circle, x + half_circle + font_label_width, row_height + half_circle, arc_start, arc_end)
 
 			self.arc_lookup[note] = tup
 
@@ -336,7 +342,9 @@ class Layout:
 			colour_indexes = [0,0,0]
 
 			solutions = chord[1]
+
 			for solution in solutions:
+
 				if solution[0] > -1000 or includeArpeggios:
 					if solution[0] <= -1000:
 						use_index = 2
@@ -346,7 +354,10 @@ class Layout:
 						use_index = 1
 
 					c_index = colour_indexes[use_index]
-					snew = " %s" % colours[c_index]
+					col = colours[c_index]
+					if solution[0] < 0:
+						col = "-fill \"rgb(200,200,200)\""
+					snew = " %s" % col
 					colour_indexes[use_index] = colour_indexes[use_index] + 1
 					push = False
 					for note in solution[1]:
@@ -355,6 +366,17 @@ class Layout:
 						snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
 
 					drawings[use_index] += snew
+
+			for drawing in range(len(drawings)):
+				if drawings[drawing]:
+					snew = " -fill \"rgb(200,200,200)\""
+					for loose in chord[2]:
+						arc = self.arc_lookup[loose]
+						if (drawing == 0 and loose[4]) or (drawing == 1 and not loose[4]) or (drawing == 2):
+							snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
+
+					drawings[drawing] += snew
+
 
 			name_modify = [" PUSH", " PULL", " ARP"]
 
@@ -370,8 +392,8 @@ class Layout:
 					drawings[drawing] = (chord_output)
 
 			for file in drawings:
-				print file
-			exit()
+				if file:
+					print file
 
 
 
@@ -427,12 +449,12 @@ def create_chords(root_notes, chord_patterns):
 
 all_chords = create_chords(output_order,(
 	("Major", "0,4,7"),
-	("+7", "0,4,7,10"),
+#	("+7", "0,4,7,10"),
 #	("+Maj7", "0,4,7,11"),
-	("Minor", "0,3,7"),
-	("-7", "0,3,7,10"),
+#	("Minor", "0,3,7"),
+#	("-7", "0,3,7,10"),
 #	("-Maj7", "0,3,7,11"),
-	("I V", "0,7"),
+#	("I V", "0,7"),
 #	("I +III", "0,4"),
 #	("I -III", "0,3"),
 #	("-III V", "4,7"),
@@ -469,6 +491,7 @@ layout_result = lay.DrawLayout()
 width = layout_result[0]
 height = layout_result[1]
 layout_output = layout_result[2]
+
 
 lay.DrawChords()
 
