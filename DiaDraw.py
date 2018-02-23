@@ -6,6 +6,8 @@ import itertools
 
 use_circle_of_fifths = True
 includeArpeggios = True
+UNIQUE_NOTES_MODE = True
+IncludeAllOutput = True
 
 colours = ("-fill \"rgb(255,155,200)\"",
 		   "-fill \"rgb(255,200,155)\"",
@@ -67,6 +69,60 @@ def create_circle_of_fifths(start_point):
 		start_point = (start_point + 7) % 12
 	return o
 
+class Note:
+	def __init__(self, musical_note, press, row_index, button_index):
+		self.note = musical_note
+		spl = self.NoteSplit(musical_note)
+		self.basic = spl[0]
+		self.octave = int(spl[1])
+		self.isPress = press
+
+		self.all_basics = [self.basic]
+		if self.basic in equivilents:
+			equiv_note = equivilents[self.basic]
+			self.all_basics.append(equiv_note)
+
+		# Generate an absolute value that correspondes to this musical tone:
+		semitone_score = semitone_lookup[spl[0]]
+		if semitone_score < semitone_lookup["C"]:
+			semitone_score += 12
+		semitone_score += int(spl[1]) * 12
+
+		self.score = semitone_score
+
+		self.row_index = int(row_index)
+		self.button_index = int(button_index) / 2
+		self.unique = row_index * 100 + button_index
+
+	def Key(self):
+		return self.score
+
+	def __str__(self):
+		return self.note + " " + str(self.unique)
+	def __repr__(self):
+		if self.isPress:
+			return self.note + "+"
+		else:
+			return self.note + "-"
+
+	def NoteMatch(self,other):
+		return self.score == other.score
+
+	def __eq__(self, other):
+		# use a semitone score comparison:
+		return self.unique == other.unique
+	def __lt__(self, other):
+		# Use the semitone score when sorting, too
+		return self.score < other.score
+	def __hash__(self):
+		return self.unique
+
+	def NoteSplit(self, note):
+		# This splits A5 into (A, 5)
+		note_name = note.rstrip("0123456789")
+		octave = note[len(note_name):]
+		return (note_name, octave)
+
 class Layout:
 	def __init__(self):
 		self.rows = []
@@ -80,6 +136,18 @@ class Layout:
 	def __repr__(self):
 		return str(self.notes)
 
+	def CompareNote(note1, note2):
+		if note1[0] == note2[0]:
+			return True
+		return False
+
+	def CompareNoteSameDirection(note1, note2):
+		if CompareNote(note1,note2):
+			if note1[4] == note2[4]:
+				return True
+
+		return False
+
 	def AddRow(self, r):
 		# Row list is expected to be a stream of PUSH PULL notes from low to high
 
@@ -91,49 +159,34 @@ class Layout:
 		# Start on a push:
 		push = True
 		for n in range(len(r)):
-			t = self.NoteSplit(r[n])
-
-			semitone_score = semitone_lookup[t[0]]
-			if semitone_score < semitone_lookup["C"]:
-				semitone_score += 12
-			semitone_score += int(t[1]) * 12
-
-			self.notes.append( (r[n], t[0], int(t[1]), semitone_score, push, (self.row_count, n) ) ) 
+			self.notes.append( Note(r[n], push, self.row_count, n) )
+			# Maybe I should use a dictionary?
+			#self.notes.append( (r[n], t[0], int(t[1]), semitone_score, push, (self.row_count, n) ) ) 
 			push = not push
 
 		self.row_count += 1
-
-		# Note sorting 
-		def note_sort(t):
-			# note sorting is a big pain
-			# a and b come before c
-			r = t[1]
-			n = int(t[2])
-
-			if r == "A" or r == "A#" or r == "Bb" or r == "B":
-				n = n + 1
-			return str(n) + r
-
-		#self.notes = sorted(self.notes, key=note_sort)
-		self.notes = sorted(self.notes, key=lambda x: x[3])
-
-	def NoteSplit(self, note):
-		# This splits A5 into (A, 5)
-		note_name = note.rstrip("0123456789")
-		octave = note[len(note_name):]
-		return (note_name, octave)
+		self.notes.sort()
 
 	def BuildChords(self, chord_list):
-		#print chord_list
+		# This method will build a list of all the chords
+		# that the instrument includes the notes for, as well as include each one of those note structures in
+		# a list
 
+
+		# I need to handle notes that appear on multiple buttons at once
 		dddebug = False
-
 		for name, makeup in chord_list:
+			# For each Chord Name, examine the CSV note makeup. The prefered inversion is assumed from the order of the notes
+			# in the layout.
 			l = makeup.split(",")
+
+			# We will generate a dictionary of all the notes in the chord, keyed to the basic note that this is/
+			# We will also generate a list of all the notes that are involved just in a pile, as this is helpful for
+			# keeping track of buttons that aren't part of a full preferred inversion (Eg you have 3 Cs but 2 Gs)
 			notes_in_chord = {}
-			loose_notes = []
+			loose_notes = {"PUSH": [], "PULL": [], "ARP": []}
 			for n in self.notes:
-				basic = n[1]
+				basic = n.basic
 				if basic in l:
 					# if the basic note is in the chord
 					# Add this note to the list of this note:
@@ -144,11 +197,16 @@ class Layout:
 						o.append(n)
 						notes_in_chord[basic] = o
 
-					loose_notes.append(n)
+					for key in loose_notes.keys():
+						if key == "ARP":
+							loose_notes[key].append(n)
+						elif key == "PUSH" and n.isPress:
+							loose_notes[key].append(n)
+						elif key == "PULL" and not n.isPress:
+							loose_notes[key].append(n)
 
 			# notes_in_chord now contains all notes that we have, push or pull, that are in this chord
 			# Let's built every single combination of this chord and score them:
-			#print notes_in_chord
 
 			fixed_structure = []
 			for a in l:
@@ -158,7 +216,9 @@ class Layout:
 
 			scored_permutes = []
 			for perm in all_permutes:
-				scored_permutes.append( [0, perm] )
+				scored_permutes.append( [0, "unknown", perm] )
+
+			#print scored_permutes
 
 			# All permutes now contains every permutation of the chord. Now, let's score all of these results and pick the best one
 			# After that we shall remove these notes as options, and then find the next best chord
@@ -166,14 +226,17 @@ class Layout:
 			def score_chords(chords):
 				for schord in chords:
 					score = 0
-					chord = schord[1]
+					chord = schord[2]
 					root_note = chord[0]
 
 					# Step one: the lower the root note, the higher the score:
-					base = root_note[3]
+					base = root_note.score
 					score += 100 - base
+
+					z = "PULL"
+
 					for n in chord:
-						nsc = n[3]
+						nsc = n.score
 						if nsc < base:
 							score -= 50
 
@@ -182,21 +245,37 @@ class Layout:
 						score -= dist
 
 						# if the direction is mixed, remove a lot of points
-						if n[4] != root_note[4]:
-							score -= 1000
+						if z == "PULL" and n.isPress:
+							z = "PUSH"
 
+						if n.isPress != root_note.isPress:
+							score -= 1000
+							z = "ARP"
+
+					schord[1] = z
 					schord[0] = score
 					#print schord
 
 			score_chords(scored_permutes)
-
 			scored_permutes.sort()#(key = lambda x: x[0])
 
+			if not includeArpeggios:
+				replacement = []
+				for x in range(len(scored_permutes)):
+					if not scored_permutes[x][1] == "ARP":
+						replacement.append(scored_permutes[x])
+
+				scored_permutes = replacement
+
+			#for test in scored_permutes:
+			#	print test
+
+			#print "Beginning best chord selection for %s." % (name)
+			dddebug = False
 			chord_results = []
 
-			i = 0
-
-			while len(scored_permutes) > 0 and i < 50:
+			loop_protection = 0
+			while len(scored_permutes) > 0 and loop_protection < 50:
 				best_chord = scored_permutes[-1]
 				chord_results.append(best_chord)
 				if dddebug:
@@ -204,28 +283,42 @@ class Layout:
 					print "There are %d records" % (len(scored_permutes))
 				next_list = []
 
-				for note in best_chord[1]:
-					if note in loose_notes:
-						loose_notes.remove(note)
+				# we know the best chord
+				# We do have duplicate notes, maybe we shouldn't include them?
+				for note in best_chord[2]:
+					for key in loose_notes.keys():
+						if note in loose_notes[key]:
+							loose_notes[key].remove(note)
 
-				for a, prev_result in scored_permutes:
+				for a, t, prev_result in scored_permutes:
 					exclude = 0
+					# We scan through all our permutations and remove any that include this button
+					# this however specifically represents a unique button, rather than a given pitch, eg C#5
 					for note in prev_result:
-						if note in best_chord[1]:
-							exclude += 1
+						if UNIQUE_NOTES_MODE:
+							for other_note in best_chord[2]:
+								if note.NoteMatch(other_note):
+									exclude += 1
+						else:
+							if note in best_chord[2]:
+								exclude += 1	
 
 					if exclude == 0:
-						next_list.append([0,prev_result])
+						next_list.append([a,t,prev_result])
 				
 				if dddebug:
 					print "There are now %d records" % (len(next_list))
 					
-				score_chords(next_list)
+				#score_chords(next_list)
 				next_list.sort()
 				scored_permutes = next_list
 
-				i += 1
+				loop_protection += 1
 
+			#for test in chord_results:
+				#print test
+
+			#print loose_notes
 
 			self.chords.append( (name, chord_results, loose_notes) )
 
@@ -285,13 +378,14 @@ class Layout:
 
 		# Then draw the notes afterwards:
 		for note in self.notes:
-			basic = note[1]
-			octave = note[2]
-			push = note[4]
-			location = note[5]
+			basic = note.basic
+			octave = note.octave
+			push = note.isPress
+			location_row = note.row_index
+			location_button_index = note.button_index
 
-			row_height = location[0] * distance_y + row_base_height			
-			q = float(location[1] / 2) - float( buttons_in_row[location[0]] - 1) / 2
+			row_height = location_row * distance_y + row_base_height
+			q = float(location_button_index) - float( buttons_in_row[location_row] - 1) / 2
 			x = self.width/2 + q * distance_x
 
 			text_x = x - center_x
@@ -321,6 +415,10 @@ class Layout:
 
 		layout_output += " layout.png"
 
+		#print self.arc_lookup
+		#for a,b in self.arc_lookup.items():
+		#	print a,  b
+
 		return [self.width, self.height, layout_output]
 
 	def DrawChords(self):
@@ -338,60 +436,52 @@ class Layout:
 
 			# We may need to create up to 3 files depending on how we want this information to be displayed
 			# We have Push, Pull and Arpeggio
-			drawings = ["", "", ""]
-			colour_indexes = [0,0,0]
+			drawings = {"PUSH": "", "PULL": "", "ARP": ""}
+			colour_indexes = {"PUSH": 0, "PULL": 0, "ARP": 0}
 
 			solutions = chord[1]
-
 			for solution in solutions:
 
-				if solution[0] > -1000 or includeArpeggios:
-					if solution[0] <= -1000:
-						use_index = 2
-					elif push:
-						use_index = 0
-					else:
-						use_index = 1
+				score = solution[0]
+				typ = solution[1]
+				notes = solution[2]
 
-					c_index = colour_indexes[use_index]
+				if typ != "ARP" or includeArpeggios:
+					c_index = colour_indexes[typ]
 					col = colours[c_index]
 					if solution[0] < 0:
 						col = "-fill \"rgb(200,200,200)\""
 					snew = " %s" % col
-					colour_indexes[use_index] = colour_indexes[use_index] + 1
-					push = False
-					for note in solution[1]:
+					colour_indexes[typ] = colour_indexes[typ] + 1
+
+					for note in notes:
 						arc = self.arc_lookup[note]
-						push = note[4]
+						snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
+					drawings[typ] += snew
+
+			for key, data in drawings.items():
+				# Do we have any output for this chord:
+				if data != "" or IncludeAllOutput:
+					# Grey boxes for for loose notes:
+					snew = " -fill \"rgb(200,200,200)\""
+					for loose in chord[2][key]:
+						arc = self.arc_lookup[loose]
 						snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
 
-					drawings[use_index] += snew
+				drawings[key] += snew
 
-			for drawing in range(len(drawings)):
-				if drawings[drawing]:
-					snew = " -fill \"rgb(200,200,200)\""
-					for loose in chord[2]:
-						arc = self.arc_lookup[loose]
-						if (drawing == 0 and loose[4]) or (drawing == 1 and not loose[4]) or (drawing == 2):
-							snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
-
-					drawings[drawing] += snew
-
-
-			name_modify = [" PUSH", " PULL", " ARP"]
-
-			for drawing in range(len(drawings)):
-				if drawings[drawing]:
+			for key, data in drawings.items():
+				if data != "":
 					chord_output = output_base
 					# Write down what chord this is
-					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\"" % ( - self.width / 2, 0, name + name_modify[drawing])
+					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\"" % ( - self.width / 2, 0, name + " " + key)
 					chord_output += " -gravity NorthWest"
-					chord_output += drawings[drawing]
-					chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, name + name_modify[drawing])
+					chord_output += data
+					chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, name + " " + key)
 
-					drawings[drawing] = (chord_output)
+					drawings[key] = (chord_output)
 
-			for file in drawings:
+			for file in drawings.values():
 				if file:
 					print file
 
@@ -493,6 +583,8 @@ height = layout_result[1]
 layout_output = layout_result[2]
 
 
+#print layout_output
+
 lay.DrawChords()
 
 exit()
@@ -552,7 +644,7 @@ def generate_output(valid_chords, matching_notes, arc_lookup, output_files):
 					chord_output += " %s" % colours[colour_index]
 					
 					for result in solution:
-						for arc in arc_lookup[result]:
+						for arc in self.arc_lookup[result]:
 							chord_output += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
 
 					colour_index += 1
