@@ -6,8 +6,9 @@ import itertools
 
 use_circle_of_fifths = True
 includeArpeggios = True
+includeBackupArpeggiosOnly = True
 UNIQUE_NOTES_MODE = True
-IncludeAllOutput = True
+IncludeAllOutput = False
 
 colours = ("-fill \"rgb(255,155,200)\"",
 		   "-fill \"rgb(255,200,155)\"",
@@ -197,13 +198,11 @@ class Layout:
 						o.append(n)
 						notes_in_chord[basic] = o
 
-					for key in loose_notes.keys():
-						if key == "ARP":
-							loose_notes[key].append(n)
-						elif key == "PUSH" and n.isPress:
-							loose_notes[key].append(n)
-						elif key == "PULL" and not n.isPress:
-							loose_notes[key].append(n)
+					loose_notes["ARP"].append(n)
+					if n.isPress:
+						loose_notes["PUSH"].append(n)
+					else:
+						loose_notes["PULL"].append(n)
 
 			# notes_in_chord now contains all notes that we have, push or pull, that are in this chord
 			# Let's built every single combination of this chord and score them:
@@ -248,7 +247,7 @@ class Layout:
 						if z == "PULL" and n.isPress:
 							z = "PUSH"
 
-						if n.isPress != root_note.isPress:
+						if n.isPress != root_note.isPress and z != "ARP":
 							score -= 1000
 							z = "ARP"
 
@@ -283,25 +282,34 @@ class Layout:
 					print "There are %d records" % (len(scored_permutes))
 				next_list = []
 
+				best_score = best_chord[0]
+				best_typ = best_chord[1]
+				best_notes = best_chord[2]
+
 				# we know the best chord
 				# We do have duplicate notes, maybe we shouldn't include them?
-				for note in best_chord[2]:
-					for key in loose_notes.keys():
-						if note in loose_notes[key]:
-							loose_notes[key].remove(note)
+				for note in best_notes:
+					#for key in loose_notes.keys():
+					if note in loose_notes[best_typ]:
+						loose_notes[best_typ].remove(note)
 
 				for a, t, prev_result in scored_permutes:
 					exclude = 0
 					# We scan through all our permutations and remove any that include this button
 					# this however specifically represents a unique button, rather than a given pitch, eg C#5
+					# However, If this isn't an arpeggio chord, we should not remove appreggio chords:
+
 					for note in prev_result:
 						if UNIQUE_NOTES_MODE:
-							for other_note in best_chord[2]:
+							for other_note in best_notes:
 								if note.NoteMatch(other_note):
 									exclude += 1
 						else:
-							if note in best_chord[2]:
+							if note in best_notes:
 								exclude += 1	
+
+					if best_typ != "ARP" and t == "ARP":
+						exclude = 0
 
 					if exclude == 0:
 						next_list.append([a,t,prev_result])
@@ -320,7 +328,7 @@ class Layout:
 
 			#print loose_notes
 
-			self.chords.append( (name, chord_results, loose_notes) )
+			self.chords.append( ( (name, makeup), chord_results, loose_notes) )
 
 		return False
 
@@ -395,11 +403,11 @@ class Layout:
 
 			if push:
 				basic_text_x = text_x - circle_size/4 + font_shift
-				octave_text_x = text_x + octave_x + font_shift
+				octave_text_x = text_x - octave_x + font_shift
 
 			else:
 				basic_text_x = text_x + circle_size/4 + font_shift
-				octave_text_x = text_x - octave_x + font_shift
+				octave_text_x = text_x + octave_x + font_shift
 				arc_start = 270
 				arc_end = 90
 
@@ -430,29 +438,45 @@ class Layout:
 		output_base += " -stroke black -strokewidth 3 -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\"" % ( font_label_width, 0, font_label_width, height, 0, height, font_label_width + width, height, 0, 0, font_label_width + width, 0)
 
 		chord_draw = []
+		chord_files = []
 
 		for chord in self.chords:
-			name = chord[0]
+			name = chord[0][0]
+			makeup = chord[0][1]
 
 			# We may need to create up to 3 files depending on how we want this information to be displayed
 			# We have Push, Pull and Arpeggio
 			drawings = {"PUSH": "", "PULL": "", "ARP": ""}
 			colour_indexes = {"PUSH": 0, "PULL": 0, "ARP": 0}
 
+			has_non_arpeggio_solutions = False
+
 			solutions = chord[1]
 			for solution in solutions:
+				snew = ""
 
 				score = solution[0]
 				typ = solution[1]
 				notes = solution[2]
 
-				if typ != "ARP" or includeArpeggios:
+				if typ != "ARP":
+					has_non_arpeggio_solutions = True
+
+				if typ != "ARP" or includeArpeggios or (not has_non_arpeggio_solutions and not includeBackupArpeggiosOnly):
 					c_index = colour_indexes[typ]
 					col = colours[c_index]
-					if solution[0] < 0:
+
+
+					
+					if (score < 0 and typ != "ARP") or (typ == "ARP" and has_non_arpeggio_solutions) or (typ == "ARP" and not has_non_arpeggio_solutions and score < -1000):
 						col = "-fill \"rgb(200,200,200)\""
+					else:
+						colour_indexes[typ] = colour_indexes[typ] + 1
+
+					#if name == "F +7":
+						#print typ, score, has_non_arpeggio_solutions, col, notes
+
 					snew = " %s" % col
-					colour_indexes[typ] = colour_indexes[typ] + 1
 
 					for note in notes:
 						arc = self.arc_lookup[note]
@@ -460,7 +484,10 @@ class Layout:
 					drawings[typ] += snew
 
 			for key, data in drawings.items():
+				snew = ""
 				# Do we have any output for this chord:
+				#print key, data
+				#print chord[2]
 				if data != "" or IncludeAllOutput:
 					# Grey boxes for for loose notes:
 					snew = " -fill \"rgb(200,200,200)\""
@@ -474,16 +501,21 @@ class Layout:
 				if data != "":
 					chord_output = output_base
 					# Write down what chord this is
-					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\"" % ( - self.width / 2, 0, name + " " + key)
+
+					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\" -draw \"text %d,%d '%s'\"" % ( - self.width / 2, -50, name + " " + key, -self.width / 2, 50, makeup)
 					chord_output += " -gravity NorthWest"
 					chord_output += data
 					chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, name + " " + key)
 
+					chord_files.append(name + " " + key)
+
 					drawings[key] = (chord_output)
 
-			for file in drawings.values():
-				if file:
-					print file
+			for data in drawings.values():
+				if data != "":
+					chord_draw.append(data)
+
+		return (chord_draw, chord_files)
 
 
 
@@ -539,9 +571,9 @@ def create_chords(root_notes, chord_patterns):
 
 all_chords = create_chords(output_order,(
 	("Major", "0,4,7"),
-#	("+7", "0,4,7,10"),
+	("+7", "0,4,7,10"),
 #	("+Maj7", "0,4,7,11"),
-#	("Minor", "0,3,7"),
+	("Minor", "0,3,7"),
 #	("-7", "0,3,7,10"),
 #	("-Maj7", "0,3,7,11"),
 #	("I V", "0,7"),
@@ -583,89 +615,14 @@ height = layout_result[1]
 layout_output = layout_result[2]
 
 
-#print layout_output
-
-lay.DrawChords()
-
-exit()
-
-partial_high = 1
-chord_files = []
-
-def generate_output(valid_chords, matching_notes, arc_lookup, output_files):
-	for chord_set in valid_chords:
-		# For all the notes in the valid chord:
-		colour_index = 0
-		notes = chord_set[1].split(',')
-
-		chord_output = "convert -size %dx%d xc:transparent " % (width + font_label_width,height)
-
-		notes_copy = list(notes)
-		solution = []
-		exclude = []
-
-		chord_output += " -stroke black -strokewidth 3 -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\" -draw \"line %d,%d %d,%d\"" % ( font_label_width, 0, font_label_width, height, 0, height, font_label_width + width, height, 0, 0, font_label_width + width, 0)
-		chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\"" % ( - width / 2, 0, chord_set[0])
-
-		chord_output += " -gravity NorthWest"
-
-		# We iterate over every note in the layout because we may have multiple solutions
-		for note_pair in matching_notes:
-			note = note_pair[0]
-			equiv_note = ""
-			try:
-				equiv_note = equivilents[note]
-			except KeyError:
-				equiv_note = ""
-
-			#if not notes in notes_copy and equiv_note in notes_copy:
-				#note = equiv_note
-
-			fullnote = note + note_pair[1]
-			if (note in notes_copy or equiv_note in notes_copy) and not (fullnote in exclude):
-				exclude.append(fullnote)
-#				if not note in notes_copy:
-#					note = equiv_note
-#					fullnote = note + note_pair[1]
-#					exclude.append(fullnote)
-
-				solution.append(fullnote)
-
-				try:
-					notes_copy.remove(note)
-				except:
-					notes_copy.remove(equiv_note)
-
-
-				# if the list is finally empty:
-				if not notes_copy:
-					#print chord_set[0] + ": " + str(solution)
-
-					chord_output += " %s" % colours[colour_index]
-					
-					for result in solution:
-						for arc in self.arc_lookup[result]:
-							chord_output += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
-
-					colour_index += 1
-					solution = []
-					notes_copy = list(notes)
-
-		if colour_index > 0 and partial_high and solution:
-			chord_output += " %s" % "-fill \"rgb(200,200,200)\""
-			for result in solution:
-				for arc in arc_lookup[result]:
-					chord_output += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
-
-		filename = "%s" % chord_set[0]
-		chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, filename)
-
-		output_files.append(filename)
-		print chord_output
-
 print layout_output
-generate_output(valid_push_chords, push_notes, push_arc_lookup, chord_files)
-generate_output(valid_pull_chords, pull_notes, pull_arc_lookup, chord_files)
+
+chord_draw_data = lay.DrawChords()
+chord_draws = chord_draw_data[0]
+chord_files = chord_draw_data[1]
+
+for draw_string in chord_draws:
+	print draw_string
 
 # Generate pages:
 succeeded = 0
