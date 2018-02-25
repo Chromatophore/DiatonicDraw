@@ -4,8 +4,8 @@ import itertools
 #print "Number of arguments: ", len(sys.argv)
 #print "The arguments are: " , str(sys.argv)
 
-use_circle_of_fifths = True
-includeArpeggios = True
+use_circle_of_fifths = False
+includeArpeggios = False
 includeBackupArpeggiosOnly = True
 UNIQUE_NOTES_MODE = True
 IncludeAllOutput = False
@@ -74,7 +74,13 @@ class Note:
 	def __init__(self, musical_note, press, row_index, button_index):
 		self.note = musical_note
 		spl = self.NoteSplit(musical_note)
+
+		# we need to resolve any note into a basic version of itself that will share language with chords:
+		# Probably we should juse use semitone number
+		self.semitone = semitone_lookup[spl[0]]
+		#self.basic = semitones[self.semitone]
 		self.basic = spl[0]
+
 		self.octave = int(spl[1])
 		self.isPress = press
 
@@ -95,6 +101,8 @@ class Note:
 		self.button_index = int(button_index) / 2
 		self.unique = row_index * 100 + button_index
 
+		
+
 	def Key(self):
 		return self.score
 
@@ -107,7 +115,7 @@ class Note:
 			return self.note + "-"
 
 	def NoteMatch(self,other):
-		return self.score == other.score
+		return self.score == other.score and self.isPress == other.isPress
 
 	def __eq__(self, other):
 		# use a semitone score comparison:
@@ -176,27 +184,30 @@ class Layout:
 
 		# I need to handle notes that appear on multiple buttons at once
 		dddebug = False
-		for name, makeup in chord_list:
+		for name, makeup, tone_makeup in chord_list:
 			# For each Chord Name, examine the CSV note makeup. The prefered inversion is assumed from the order of the notes
 			# in the layout.
-			l = makeup.split(",")
+			l = tone_makeup
 
 			# We will generate a dictionary of all the notes in the chord, keyed to the basic note that this is/
 			# We will also generate a list of all the notes that are involved just in a pile, as this is helpful for
 			# keeping track of buttons that aren't part of a full preferred inversion (Eg you have 3 Cs but 2 Gs)
 			notes_in_chord = {}
 			loose_notes = {"PUSH": [], "PULL": [], "ARP": []}
+
+
+
 			for n in self.notes:
-				basic = n.basic
-				if basic in l:
+				tone = str(n.semitone)
+				if tone in tone_makeup:
 					# if the basic note is in the chord
 					# Add this note to the list of this note:
-					if basic in notes_in_chord:
-						notes_in_chord[basic].append(n)
+					if tone in notes_in_chord:
+						notes_in_chord[tone].append(n)
 					else:
 						o = []
 						o.append(n)
-						notes_in_chord[basic] = o
+						notes_in_chord[tone] = o
 
 					loose_notes["ARP"].append(n)
 					if n.isPress:
@@ -209,7 +220,13 @@ class Layout:
 
 			fixed_structure = []
 			for a in l:
-				fixed_structure.append(notes_in_chord[a])
+				if a in notes_in_chord:
+					fixed_structure.append(notes_in_chord[a])
+				else:
+					print fixed_structure
+					print notes_in_chord
+					print a
+					exit()
 
 			all_permutes = list(itertools.product(*fixed_structure))
 
@@ -224,7 +241,7 @@ class Layout:
 
 			def score_chords(chords):
 				for schord in chords:
-					score = 0
+					score = 0.0
 					chord = schord[2]
 					root_note = chord[0]
 
@@ -233,6 +250,8 @@ class Layout:
 					score += 100 - base
 
 					z = "PULL"
+
+					average_location = [0.0, 0.0]
 
 					for n in chord:
 						nsc = n.score
@@ -251,6 +270,13 @@ class Layout:
 							score -= 1000
 							z = "ARP"
 
+						average_location[0] += n.button_index
+						average_location[1] += n.row_index
+
+					# Use a very small amount of distance calculation to prefer certain chords over others:
+					distance = pow(pow((root_note.button_index - average_location[0]),2) + pow((root_note.row_index - average_location[1]),2),0.5) / 100
+					score -= distance
+
 					schord[1] = z
 					schord[0] = score
 					#print schord
@@ -266,6 +292,7 @@ class Layout:
 
 				scored_permutes = replacement
 
+			#print name
 			#for test in scored_permutes:
 			#	print test
 
@@ -495,14 +522,14 @@ class Layout:
 						arc = self.arc_lookup[loose]
 						snew += " -draw \"arc %d,%d %d,%d %d,%d\"" % arc
 
-				drawings[key] += snew
+					drawings[key] += snew
 
 			for key, data in drawings.items():
 				if data != "":
 					chord_output = output_base
 					# Write down what chord this is
 
-					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\" -draw \"text %d,%d '%s'\"" % ( - self.width / 2, -50, name + " " + key, -self.width / 2, 50, makeup)
+					chord_output += " -stroke transparent -fill black -font Arial -pointsize 48 -gravity center -draw \"text %d,%d '%s'\" -draw \"text %d,%d '%s'\"" % ( - self.width / 2, -50, name + " " + key, -self.width / 2, 50, ",".join(makeup))
 					chord_output += " -gravity NorthWest"
 					chord_output += data
 					chord_output += " layout.png -geometry +%d+0 -composite -flatten \"%s.png\"" % (font_label_width, name + " " + key)
@@ -532,10 +559,10 @@ row3 = []
 
 ### BC layout:
 
-row1 = ["E3","A3", "G3","B3", "C4","D4", "E4","F4", "G4","A4",
-	    "C5","B4", "E5","D5", "G5","F5", "C6","A5", "E6","B5"]
-row2 = ["D#3","G#3", "F#3","A#3", "B3","C#4", "D#4","E4", "F#4","G#4", "B4","A#4",
-        "D#5","C#5", "F#5","E5", "B5","G#5", "D#6","A#5", "F#6", "C#6"]
+#row1 = ["E3","A3", "G3","B3", "C4","D4", "E4","F4", "G4","A4",
+#	    "C5","B4", "E5","D5", "G5","F5", "C6","A5", "E6","B5"]
+#row2 = ["D#3","G#3", "F#3","A#3", "B3","C#4", "D#4","E4", "F#4","G#4", "B4","A#4",
+#        "D#5","C#5", "F#5","E5", "B5","G#5", "D#6","A#5", "F#6", "C#6"]
 
 
 
@@ -543,11 +570,16 @@ lay = Layout()
 lay.AddRow(row1)
 lay.AddRow(row2)
 
+if use_circle_of_fifths:
+	anchor_note = "G#"
+	circle_start_point = (semitones.index(anchor_note.upper())) % 12
+	output_order = (create_circle_of_fifths(circle_start_point))
+else:
+	output_order = []
+	for j in range(12):
+		output_order.append(semitones[j])
 
-anchor_note = "G#"
-circle_start_point = (semitones.index(anchor_note.upper())) % 12
-
-output_order = (create_circle_of_fifths(circle_start_point))
+output_order = ["G","A","B","C","D","E","F#"]
 
 chords = []
 def create_chords(root_notes, chord_patterns):
@@ -557,44 +589,38 @@ def create_chords(root_notes, chord_patterns):
 			name = pattern[0]
 			offsets = pattern[1].split(",")
 			chord = []
+			chord_tones = []
 			semitone_number = semitone_lookup[root_note]
 			for offset in offsets:
-				chord.append(semitones[(semitone_number + int(offset)) % 12])
+				num = (semitone_number + int(offset)) % 12
+				chord_tones.append(str(num))
+				chord.append(semitones[num])
 
 			root_name = root_note;
 			if root_note in equivilents:
 				root_name += "~" + equivilents[root_name]
 
-			o.append(( "%s %s" % (root_name, name) , ','.join(chord) ) )
+			o.append(( "%s %s" % (root_name, name) , tuple(chord), tuple(chord_tones) ) )
 
 	return o
 
 all_chords = create_chords(output_order,(
-	("Major", "0,4,7"),
-	("+7", "0,4,7,10"),
+#	("Major", "0,4,7"),
+#	("+7", "0,4,7,10"),
 #	("+Maj7", "0,4,7,11"),
-	("Minor", "0,3,7"),
+#	("Minor", "0,3,7"),
 #	("-7", "0,3,7,10"),
 #	("-Maj7", "0,3,7,11"),
-#	("I V", "0,7"),
+	("I V", "0,7"),
 #	("I +III", "0,4"),
 #	("I -III", "0,3"),
 #	("-III V", "4,7"),
 #	("+III V", "3,7"),
 	 ))
 
-push_notes = []
-pull_notes = []
-all_notes = []
-
 # Now let's generate information for the layout
 
 lay.BuildChords(all_chords)
-
-
-#convert -size 100x100 xc:skyblue -fill transparent -stroke black -draw "circle 50,30 50,10" -draw "line 50,10 50,50" -fill black -font Arial -draw "text 10,10 'Anthony'" circle.png
-#convert -size 300x300 xc:skyblue -fill transparent -strokewidth 2 -stroke black -draw "circle 150,90 150,30" -draw "line 150,30 150,150" -fill black -font Arial -stroke transparent -pointsize 36 -gravity center -draw "text -27,-60 'A'" -draw "text 33,-60 'F#'" circle.png
-#convert -size 300x300 xc:skyblue -fill transparent -strokewidth 2 -stroke black -draw "circle 150,90 150,30" -draw "line 150,30 150,150" -fill black -font Arial -stroke transparent -pointsize 36 -gravity center -draw "text -27,-60 'IIIIII'" -draw "text 32,-60 'IIIIII'" circle.png
 
 circle_size = 120
 distance_x = 150
